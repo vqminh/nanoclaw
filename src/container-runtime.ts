@@ -11,11 +11,34 @@ import { logger } from './logger.js';
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'container';
 
-/** Hostname containers use to reach the host machine. */
-export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+/**
+ * Hostname/IP containers use to reach the host machine.
+ * Apple Container (macOS): containers run in a VM on 192.168.64.0/24 — the host
+ *   is the bridge gateway, detected from the bridge100 interface.
+ * Docker Desktop (macOS): host.docker.internal is provided by the Docker VM.
+ * Docker (Linux): host.docker.internal is injected via --add-host.
+ */
+export const CONTAINER_HOST_GATEWAY = detectHostGateway();
+
+function detectHostGateway(): string {
+  if (CONTAINER_RUNTIME_BIN === 'container' && os.platform() === 'darwin') {
+    // Apple Container: find host IP on the bridge100 (192.168.64.0/24) network
+    const ifaces = os.networkInterfaces();
+    for (const [, addrs] of Object.entries(ifaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs) {
+        if (addr.family === 'IPv4' && addr.address.startsWith('192.168.64.')) {
+          return addr.address; // host-side bridge IP, e.g. 192.168.64.1
+        }
+      }
+    }
+  }
+  return 'host.docker.internal';
+}
 
 /**
  * Address the credential proxy binds to.
+ * Apple Container (macOS): containers reach the host via 192.168.64.1 — bind there.
  * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
  * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
  *   falling back to 0.0.0.0 if the interface isn't found.
@@ -24,6 +47,10 @@ export const PROXY_BIND_HOST =
   process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
 
 function detectProxyBindHost(): string {
+  if (CONTAINER_RUNTIME_BIN === 'container' && os.platform() === 'darwin') {
+    // Apple Container: bind to the bridge IP so containers in the VM can reach it
+    return CONTAINER_HOST_GATEWAY;
+  }
   if (os.platform() === 'darwin') return '127.0.0.1';
 
   // WSL uses Docker Desktop (same VM routing as macOS) — loopback is correct.
