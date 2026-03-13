@@ -37,6 +37,7 @@ export class DiscordChannel implements Channel {
 
   async connect(): Promise<void> {
     this.client = new Client({
+      rest: { timeout: 30000 },
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
@@ -173,7 +174,7 @@ export class DiscordChannel implements Channel {
       logger.error({ err: err.message }, 'Discord client error');
     });
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       this.client!.once(Events.ClientReady, (readyClient) => {
         logger.info(
           { username: readyClient.user.tag, id: readyClient.user.id },
@@ -186,7 +187,23 @@ export class DiscordChannel implements Channel {
         resolve();
       });
 
-      this.client!.login(this.botToken);
+      const attemptLogin = (retriesLeft: number) => {
+        this.client!.login(this.botToken).catch((err) => {
+          if (retriesLeft > 0) {
+            const delay = (4 - retriesLeft) * 5000;
+            logger.warn(
+              { err: err.message, retriesLeft, delayMs: delay },
+              'Discord login failed, retrying',
+            );
+            setTimeout(() => attemptLogin(retriesLeft - 1), delay);
+          } else {
+            logger.error({ err: err.message }, 'Discord login failed, giving up');
+            reject(err);
+          }
+        });
+      };
+
+      attemptLogin(3);
     });
   }
 
