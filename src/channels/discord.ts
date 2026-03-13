@@ -197,7 +197,10 @@ export class DiscordChannel implements Channel {
             );
             setTimeout(() => attemptLogin(retriesLeft - 1), delay);
           } else {
-            logger.error({ err: err.message }, 'Discord login failed, giving up');
+            logger.error(
+              { err: err.message },
+              'Discord login failed, giving up',
+            );
             reject(err);
           }
         });
