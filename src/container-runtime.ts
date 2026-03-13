@@ -2,7 +2,7 @@
  * Container runtime abstraction for NanoClaw.
  * All runtime-specific logic lives here so swapping runtimes means changing one file.
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 
@@ -64,7 +64,11 @@ function detectProxyBindHost(): string {
     const ipv4 = docker0.find((a) => a.family === 'IPv4');
     if (ipv4) return ipv4.address;
   }
-  return '0.0.0.0';
+  logger.warn(
+    'No docker0 interface found on Linux — credential proxy binding to 127.0.0.1. ' +
+      'Set CREDENTIAL_PROXY_HOST=0.0.0.0 if containers cannot reach the host via loopback.',
+  );
+  return '127.0.0.1';
 }
 
 /** CLI args needed for the container to resolve the host gateway. */
@@ -87,20 +91,20 @@ export function readonlyMountArgs(
   ];
 }
 
-/** Returns the shell command to stop a container by name. */
-export function stopContainer(name: string): string {
-  return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
+/** Returns the args to stop a container by name (use with execFile, not exec). */
+export function stopContainerArgs(name: string): string[] {
+  return ['stop', name];
 }
 
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
   try {
-    execSync(`${CONTAINER_RUNTIME_BIN} system status`, { stdio: 'pipe' });
+    execFileSync(CONTAINER_RUNTIME_BIN, ['system', 'status'], { stdio: 'pipe' });
     logger.debug('Container runtime already running');
   } catch {
     logger.info('Starting container runtime...');
     try {
-      execSync(`${CONTAINER_RUNTIME_BIN} system start`, {
+      execFileSync(CONTAINER_RUNTIME_BIN, ['system', 'start'], {
         stdio: 'pipe',
         timeout: 30000,
       });
@@ -139,7 +143,7 @@ export function ensureContainerRuntimeRunning(): void {
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
-    const output = execSync(`${CONTAINER_RUNTIME_BIN} ls --format json`, {
+    const output = execFileSync(CONTAINER_RUNTIME_BIN, ['ls', '--format', 'json'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
@@ -153,7 +157,7 @@ export function cleanupOrphans(): void {
       .map((c) => c.configuration.id);
     for (const name of orphans) {
       try {
-        execSync(stopContainer(name), { stdio: 'pipe' });
+        execFileSync(CONTAINER_RUNTIME_BIN, stopContainerArgs(name), { stdio: 'pipe' });
       } catch {
         /* already stopped */
       }
