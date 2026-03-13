@@ -150,7 +150,10 @@ export class TelegramChannel implements Channel {
         this.pollTimeout = setTimeout(() => this.pollLoop(), 100);
       })
       .catch((err) => {
-        logger.warn({ err: err.message }, 'Telegram poll error, retrying in 5s');
+        logger.warn(
+          { err: err.message },
+          'Telegram poll error, retrying in 5s',
+        );
         this.pollTimeout = setTimeout(() => this.pollLoop(), 5000);
       });
   }
@@ -160,8 +163,10 @@ export class TelegramChannel implements Channel {
 
     if (!content) {
       if (msg.photo) content = '[Photo]';
-      else if (msg.document) content = `[Document: ${msg.document.file_name ?? 'file'}]`;
-      else if (msg.sticker) content = `[Sticker${msg.sticker.emoji ? ': ' + msg.sticker.emoji : ''}]`;
+      else if (msg.document)
+        content = `[Document: ${msg.document.file_name ?? 'file'}]`;
+      else if (msg.sticker)
+        content = `[Sticker${msg.sticker.emoji ? ': ' + msg.sticker.emoji : ''}]`;
       else if (msg.voice) content = '[Voice message]';
       else if (msg.video) content = '[Video]';
       else if (msg.audio) content = '[Audio]';
