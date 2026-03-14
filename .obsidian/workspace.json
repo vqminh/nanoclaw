@@ -92,18 +92,6 @@
               "icon": "terminal",
               "title": "Terminal: zsh"
             }
-          },
-          {
-            "id": "a9b40ce54b024507",
-            "type": "leaf",
-            "state": {
-              "type": "vscode-editor",
-              "state": {
-                "file": "src/channels/registry.ts"
-              },
-              "icon": "lucide-file",
-              "title": "registry"
-            }
           }
         ],
         "currentTab": 1
@@ -272,11 +260,13 @@
   },
   "active": "03379caed1f2183b",
   "lastOpenFiles": [
-    "src/channels/registry.ts",
     "src/channels/index.ts",
+    "src/channels/registry.ts",
+    "src/channels/discord.test.ts",
+    "src/channels/discord.ts",
+    "docs/docker-sandboxes.md",
     "src/channels/gmail.test.ts",
     "src/channels/gmail.ts",
-    "src/channels/discord.ts",
     "container/agent-runner/src/index.ts",
     "container/skills/pdf-reader/SKILL.md",
     "container/skills/agent-browser/SKILL.md",
