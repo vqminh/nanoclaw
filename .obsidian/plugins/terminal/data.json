@@ -1,0 +1,85 @@
+{
+  "addToCommand": true,
+  "addToContextMenu": true,
+  "createInstanceNearExistingOnes": true,
+  "errorNoticeTimeout": 0,
+  "exposeInternalModules": true,
+  "focusOnNewInstance": true,
+  "hideStatusBar": "focused",
+  "interceptLogging": true,
+  "language": "",
+  "macOSOptionKeyPassthrough": true,
+  "newInstanceBehavior": "newHorizontalSplit",
+  "noticeTimeout": 5,
+  "openChangelogOnUpdate": true,
+  "pinNewInstance": true,
+  "preferredRenderer": "webgl",
+  "profiles": {
+    "darwinExternalDefault": {
+      "args": [
+        "\"$PWD\""
+      ],
+      "executable": "/System/Applications/Utilities/Terminal.app/Contents/macOS/Terminal",
+      "followTheme": true,
+      "name": "",
+      "platforms": {
+        "darwin": true
+      },
+      "restoreHistory": false,
+      "rightClickAction": "copyPaste",
+      "successExitCodes": [
+        "0",
+        "SIGINT",
+        "SIGTERM"
+      ],
+      "terminalOptions": {
+        "documentOverride": null
+      },
+      "type": "external"
+    },
+    "darwinIntegratedDefault": {
+      "args": [
+        "--login"
+      ],
+      "executable": "/bin/zsh",
+      "followTheme": true,
+      "name": "",
+      "platforms": {
+        "darwin": true
+      },
+      "pythonExecutable": "python3",
+      "restoreHistory": false,
+      "rightClickAction": "copyPaste",
+      "successExitCodes": [
+        "0",
+        "SIGINT",
+        "SIGTERM"
+      ],
+      "terminalOptions": {
+        "documentOverride": null,
+        "fontSize": 13
+      },
+      "type": "integrated",
+      "useWin32Conhost": true
+    },
+    "developerConsole": {
+      "followTheme": true,
+      "name": "",
+      "restoreHistory": false,
+      "rightClickAction": "copyPaste",
+      "successExitCodes": [
+        "0",
+        "SIGINT",
+        "SIGTERM"
+      ],
+      "terminalOptions": {
+        "documentOverride": null
+      },
+      "type": "developerConsole"
+    }
+  },
+  "defaultProfile": "darwinIntegratedDefault",
+  "terminalOptions": {
+    "documentOverride": null
+  }
+}
