@@ -1,3 +1,6 @@
+import https from 'https';
+import { Api, Bot } from 'grammy';
+
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -9,249 +12,255 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
-// ---------------------------------------------------------------------------
-// Telegram Bot API types (minimal subset)
-// ---------------------------------------------------------------------------
-
-interface TgUser {
-  id: number;
-  is_bot: boolean;
-  first_name: string;
-  last_name?: string;
-  username?: string;
+export interface TelegramChannelOpts {
+  onMessage: OnInboundMessage;
+  onChatMetadata: OnChatMetadata;
+  registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
-interface TgChat {
-  id: number;
-  type: 'private' | 'group' | 'supergroup' | 'channel';
-  title?: string;
-  username?: string;
-  first_name?: string;
-  last_name?: string;
+/**
+ * Send a message with Telegram Markdown parse mode, falling back to plain text.
+ * Claude's output naturally matches Telegram's Markdown v1 format:
+ *   *bold*, _italic_, `code`, ```code blocks```, [links](url)
+ */
+async function sendTelegramMessage(
+  api: { sendMessage: Api['sendMessage'] },
+  chatId: string | number,
+  text: string,
+  options: { message_thread_id?: number } = {},
+): Promise<void> {
+  try {
+    await api.sendMessage(chatId, text, {
+      ...options,
+      parse_mode: 'Markdown',
+    });
+  } catch (err) {
+    // Fallback: send as plain text if Markdown parsing fails
+    logger.debug({ err }, 'Markdown send failed, falling back to plain text');
+    await api.sendMessage(chatId, text, options);
+  }
 }
-
-interface TgMessage {
-  message_id: number;
-  from?: TgUser;
-  chat: TgChat;
-  date: number;
-  text?: string;
-  caption?: string;
-  photo?: unknown[];
-  document?: { file_name?: string; mime_type?: string };
-  sticker?: { emoji?: string };
-  voice?: unknown;
-  video?: unknown;
-  audio?: unknown;
-}
-
-interface TgUpdate {
-  update_id: number;
-  message?: TgMessage;
-  edited_message?: TgMessage;
-}
-
-interface TgApiResponse<T> {
-  ok: boolean;
-  result: T;
-  description?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function chatName(chat: TgChat): string {
-  if (chat.title) return chat.title;
-  const parts = [chat.first_name, chat.last_name].filter(Boolean);
-  if (parts.length) return parts.join(' ');
-  if (chat.username) return `@${chat.username}`;
-  return `tg:${chat.id}`;
-}
-
-function senderName(from: TgUser): string {
-  const parts = [from.first_name, from.last_name].filter(Boolean);
-  if (parts.length) return parts.join(' ');
-  if (from.username) return `@${from.username}`;
-  return String(from.id);
-}
-
-// ---------------------------------------------------------------------------
-// TelegramChannel
-// ---------------------------------------------------------------------------
 
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
-  private token: string;
-  private opts: ChannelOpts;
-  private polling = false;
-  private offset = 0;
-  private pollTimeout: ReturnType<typeof setTimeout> | null = null;
-  private botUsername: string | null = null;
+  private bot: Bot | null = null;
+  private opts: TelegramChannelOpts;
+  private botToken: string;
 
-  constructor(token: string, opts: ChannelOpts) {
-    this.token = token;
+  constructor(botToken: string, opts: TelegramChannelOpts) {
+    this.botToken = botToken;
     this.opts = opts;
   }
 
-  // -------------------------------------------------------------------------
-  // Telegram API wrapper
-  // -------------------------------------------------------------------------
-
-  private async apiCall<T>(
-    method: string,
-    body?: Record<string, unknown>,
-  ): Promise<T> {
-    const url = `https://api.telegram.org/bot${this.token}/${method}`;
-    const res = await fetch(url, {
-      method: body ? 'POST' : 'GET',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const data = (await res.json()) as TgApiResponse<T>;
-    if (!data.ok) {
-      throw new Error(`Telegram API ${method} failed: ${data.description}`);
-    }
-    return data.result;
-  }
-
-  // -------------------------------------------------------------------------
-  // Channel interface
-  // -------------------------------------------------------------------------
-
   async connect(): Promise<void> {
-    const me = await this.apiCall<TgUser>('getMe');
-    this.botUsername = me.username ?? null;
-    this.polling = true;
+    this.bot = new Bot(this.botToken, {
+      client: {
+        baseFetchConfig: { agent: https.globalAgent, compress: true },
+      },
+    });
 
-    console.log(`\n  Telegram bot: @${me.username} (id=${me.id})`);
-    console.log(
-      `  Add the bot to a group or start a DM, then use /chatid to get the JID\n`,
-    );
+    // Command to get chat ID (useful for registration)
+    this.bot.command('chatid', (ctx) => {
+      const chatId = ctx.chat.id;
+      const chatType = ctx.chat.type;
+      const chatName =
+        chatType === 'private'
+          ? ctx.from?.first_name || 'Private'
+          : (ctx.chat as any).title || 'Unknown';
 
-    this.pollLoop();
-  }
+      ctx.reply(
+        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        { parse_mode: 'Markdown' },
+      );
+    });
 
-  private pollLoop(): void {
-    if (!this.polling) return;
+    // Command to check bot status
+    this.bot.command('ping', (ctx) => {
+      ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
 
-    this.apiCall<TgUpdate[]>('getUpdates', {
-      offset: this.offset,
-      timeout: 30,
-      allowed_updates: ['message', 'edited_message'],
-    })
-      .then((updates) => {
-        for (const update of updates) {
-          this.offset = update.update_id + 1;
-          const msg = update.message ?? update.edited_message;
-          if (msg) this.handleMessage(msg);
+    this.bot.on('message:text', async (ctx) => {
+      // Skip commands
+      if (ctx.message.text.startsWith('/')) return;
+
+      const chatJid = `tg:${ctx.chat.id}`;
+      let content = ctx.message.text;
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id.toString() ||
+        'Unknown';
+      const sender = ctx.from?.id.toString() || '';
+      const msgId = ctx.message.message_id.toString();
+
+      // Determine chat name
+      const chatName =
+        ctx.chat.type === 'private'
+          ? senderName
+          : (ctx.chat as any).title || chatJid;
+
+      // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
+      // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
+      // (e.g., ^@Andy\b), so we prepend the trigger when the bot is @mentioned.
+      const botUsername = ctx.me?.username?.toLowerCase();
+      if (botUsername) {
+        const entities = ctx.message.entities || [];
+        const isBotMentioned = entities.some((entity) => {
+          if (entity.type === 'mention') {
+            const mentionText = content
+              .substring(entity.offset, entity.offset + entity.length)
+              .toLowerCase();
+            return mentionText === `@${botUsername}`;
+          }
+          return false;
+        });
+        if (isBotMentioned && !TRIGGER_PATTERN.test(content)) {
+          content = `@${ASSISTANT_NAME} ${content}`;
         }
-        this.pollTimeout = setTimeout(() => this.pollLoop(), 100);
-      })
-      .catch((err) => {
-        logger.warn(
-          { err: err.message },
-          'Telegram poll error, retrying in 5s',
+      }
+
+      // Store chat metadata for discovery
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
+
+      // Only deliver full message for registered groups
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        logger.debug(
+          { chatJid, chatName },
+          'Message from unregistered Telegram chat',
         );
-        this.pollTimeout = setTimeout(() => this.pollLoop(), 5000);
-      });
-  }
-
-  private handleMessage(msg: TgMessage): void {
-    let content = msg.text ?? msg.caption ?? '';
-
-    if (!content) {
-      if (msg.photo) content = '[Photo]';
-      else if (msg.document)
-        content = `[Document: ${msg.document.file_name ?? 'file'}]`;
-      else if (msg.sticker)
-        content = `[Sticker${msg.sticker.emoji ? ': ' + msg.sticker.emoji : ''}]`;
-      else if (msg.voice) content = '[Voice message]';
-      else if (msg.video) content = '[Video]';
-      else if (msg.audio) content = '[Audio]';
-      else return;
-    }
-
-    const chatId = msg.chat.id;
-    const chatJid = `tg:${chatId}`;
-    const timestamp = new Date(msg.date * 1000).toISOString();
-    const name = chatName(msg.chat);
-    const isGroup = msg.chat.type !== 'private';
-
-    this.opts.onChatMetadata(chatJid, timestamp, name, 'telegram', isGroup);
-
-    const from = msg.from;
-    const sender = from ? String(from.id) : 'unknown';
-    const sender_name = from ? senderName(from) : 'Unknown';
-
-    // Handle /chatid command
-    if (content.trim() === '/chatid') {
-      this.sendMessage(chatJid, `Chat JID: tg:${chatId}`).catch(() => {});
-      return;
-    }
-
-    // For group chats, only respond when trigger matches or bot is @mentioned
-    if (isGroup) {
-      const botMention = this.botUsername ? `@${this.botUsername}` : null;
-      const hasMention = botMention ? content.includes(botMention) : false;
-
-      if (!hasMention && !TRIGGER_PATTERN.test(content)) {
         return;
       }
 
-      // Strip bot @mention from content
-      if (botMention) {
-        content = content.replace(botMention, '').trim();
-      }
+      // Deliver message — startMessageLoop() will pick it up
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender,
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
 
-      // Ensure trigger prefix is present
-      if (!TRIGGER_PATTERN.test(content)) {
-        content = `@${ASSISTANT_NAME} ${content}`;
-      }
-    }
+      logger.info(
+        { chatJid, chatName, sender: senderName },
+        'Telegram message stored',
+      );
+    });
 
-    this.opts.onMessage(chatJid, {
-      id: String(msg.message_id),
-      chat_jid: chatJid,
-      sender,
-      sender_name,
-      content,
-      timestamp,
-      is_from_me: false,
-      is_bot_message: msg.from?.is_bot ?? false,
+    // Handle non-text messages with placeholders so the agent knows something was sent
+    const storeNonText = (ctx: any, placeholder: string) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content: `${placeholder}${caption}`,
+        timestamp,
+        is_from_me: false,
+      });
+    };
+
+    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
+    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
+    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+    this.bot.on('message:document', (ctx) => {
+      const name = ctx.message.document?.file_name || 'file';
+      storeNonText(ctx, `[Document: ${name}]`);
+    });
+    this.bot.on('message:sticker', (ctx) => {
+      const emoji = ctx.message.sticker?.emoji || '';
+      storeNonText(ctx, `[Sticker ${emoji}]`);
+    });
+    this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
+    this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+
+    // Handle errors gracefully
+    this.bot.catch((err) => {
+      logger.error({ err: err.message }, 'Telegram bot error');
+    });
+
+    // Start polling — returns a Promise that resolves when started
+    return new Promise<void>((resolve) => {
+      this.bot!.start({
+        onStart: (botInfo) => {
+          logger.info(
+            { username: botInfo.username, id: botInfo.id },
+            'Telegram bot connected',
+          );
+          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(
+            `  Send /chatid to the bot to get a chat's registration ID\n`,
+          );
+          resolve();
+        },
+      });
     });
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    const chatId = jid.replace(/^tg:/, '');
-    const MAX_LENGTH = 4096;
-
-    for (let i = 0; i < text.length; i += MAX_LENGTH) {
-      await this.apiCall('sendMessage', {
-        chat_id: chatId,
-        text: text.slice(i, i + MAX_LENGTH),
-      });
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
     }
 
-    logger.info({ jid, length: text.length }, 'Telegram message sent');
-  }
-
-  async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    if (!isTyping) return;
-    const chatId = jid.replace(/^tg:/, '');
     try {
-      await this.apiCall('sendChatAction', {
-        chat_id: chatId,
-        action: 'typing',
-      });
+      const numericId = jid.replace(/^tg:/, '');
+
+      // Telegram has a 4096 character limit per message — split if needed
+      const MAX_LENGTH = 4096;
+      if (text.length <= MAX_LENGTH) {
+        await sendTelegramMessage(this.bot.api, numericId, text);
+      } else {
+        for (let i = 0; i < text.length; i += MAX_LENGTH) {
+          await sendTelegramMessage(
+            this.bot.api,
+            numericId,
+            text.slice(i, i + MAX_LENGTH),
+          );
+        }
+      }
+      logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
-      logger.debug({ jid, err }, 'Failed to send Telegram typing action');
+      logger.error({ jid, err }, 'Failed to send Telegram message');
     }
   }
 
   isConnected(): boolean {
-    return this.polling;
+    return this.bot !== null;
   }
 
   ownsJid(jid: string): boolean {
@@ -259,25 +268,30 @@ export class TelegramChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
-    this.polling = false;
-    if (this.pollTimeout) {
-      clearTimeout(this.pollTimeout);
-      this.pollTimeout = null;
+    if (this.bot) {
+      this.bot.stop();
+      this.bot = null;
+      logger.info('Telegram bot stopped');
     }
-    logger.info('Telegram bot stopped');
+  }
+
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    if (!this.bot || !isTyping) return;
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      await this.bot.api.sendChatAction(numericId, 'typing');
+    } catch (err) {
+      logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
+    }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Self-registration
-// ---------------------------------------------------------------------------
 
 registerChannel('telegram', (opts: ChannelOpts) => {
   const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
-    logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set — channel disabled');
+    logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
   return new TelegramChannel(token, opts);

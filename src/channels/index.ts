@@ -10,7 +10,7 @@ import './gmail.js';
 // slack
 
 // telegram
-// import './telegram.js';
+import './telegram.js';
 
 // whatsapp
 import './whatsapp.js';
