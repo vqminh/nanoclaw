@@ -38,3 +38,4 @@ groups/global/*
 agents-sdk-docs
 ollama.log
 .obsidian/workspace.json
+nanoclaw.db
