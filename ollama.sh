@@ -22,15 +22,14 @@ else
     fi
 
     echo ""
-    echo "Please select a model from the list below:"
+    echo "Please select a model"
 
     select model in $models_list; do
         if [ -n "$model" ]; then
-            echo ""
-            echo "✅ You successfully selected: $model"
+            echo "$model"
             break
         else
-            echo "Invalid selection. Please enter a valid number from the list."
+            echo "Invalid selection."
         fi
     done
 fi
