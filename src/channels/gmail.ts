@@ -182,7 +182,9 @@ export class GmailChannel implements Channel {
   // --- Private ---
 
   private buildQuery(): string {
-    return 'is:unread category:primary {from:gantz13@gmail.com from:kei472@gmail.com from:anhvphan@gmail.com}';
+    const base = 'is:unread category:primary';
+    const filter = process.env.GMAIL_SENDER_FILTER;
+    return filter ? `${base} {${filter}}` : base;
   }
 
   private async pollForMessages(): Promise<void> {
