@@ -263,7 +263,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       },
       formatMessages,
       canSenderInteract: (msg) => {
-        const hasTrigger = getTriggerPattern(group.trigger).test(msg.content.trim());
+        const hasTrigger = getTriggerPattern(group.trigger).test(
+          msg.content.trim(),
+        );
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
         return (
           isMainGroup ||
@@ -510,7 +512,11 @@ async function startMessageLoop(): Promise<void> {
           // --- Session command interception (message loop) ---
           // Scan ALL messages in the batch for a session command.
           const loopCmdMsg = groupMessages.find(
-            (m) => extractSessionCommand(m.content, getTriggerPattern(group.trigger)) !== null,
+            (m) =>
+              extractSessionCommand(
+                m.content,
+                getTriggerPattern(group.trigger),
+              ) !== null,
           );
 
           if (loopCmdMsg) {
