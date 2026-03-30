@@ -3,6 +3,7 @@ node_modules/
 .npm-cache/
 # Build output
 dist/
+investing
 
 # Local data & auth
 store/

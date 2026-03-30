@@ -630,7 +630,10 @@ async function main(): Promise<void> {
   // Bind to 0.0.0.0 so the proxy always starts even when the bridge
   // interface (e.g. 192.168.64.1) isn't up yet after a runtime start.
   // Containers connect via CONTAINER_HOST_GATEWAY, not this bind address.
-  const proxyServer = await startCredentialProxy(CREDENTIAL_PROXY_PORT, '0.0.0.0');
+  const proxyServer = await startCredentialProxy(
+    CREDENTIAL_PROXY_PORT,
+    '0.0.0.0',
+  );
   initDatabase();
   logger.info('Database initialized');
   loadState();
